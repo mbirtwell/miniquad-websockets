@@ -1,6 +1,7 @@
 use crate::error::{Error, Result};
-use crate::event::Event;
+use crate::event::WebSocketEvent;
 use crate::request::Request;
+use crate::IntoClientRequest;
 use futures_util::sink::SinkExt;
 use miniquad::CustomEventPostBox;
 use std::thread;
@@ -21,13 +22,13 @@ pub struct WebSocketContext<EventType> {
     #[allow(dead_code)]
     end_channel: oneshot::Sender<()>,
 }
-pub struct WebSocketSink(Sender<Message>);
+pub struct WebSocketSink(Handle, Sender<Message>);
 
 pub fn init<WebSocketId, EventType>(
     post_box: CustomEventPostBox<EventType>,
 ) -> Result<WebSocketContext<EventType>>
 where
-    EventType: Send + From<Event<WebSocketId>>,
+    EventType: Send + From<WebSocketEvent<WebSocketId>>,
     WebSocketId: Clone,
 {
     let mut runtime = Builder::new().basic_scheduler().enable_io().build()?;
@@ -52,20 +53,20 @@ fn process_recv<WebSocketId, EventType>(
     msg: Option<TungResult<Message>>,
 ) -> bool
 where
-    EventType: Send + From<Event<WebSocketId>>,
+    EventType: Send + From<WebSocketEvent<WebSocketId>>,
     WebSocketId: Clone,
 {
     match msg {
         Some(Ok(msg)) => {
-            post_box.post(Event::message(id, msg));
+            post_box.post(WebSocketEvent::message(id, msg));
             true
         }
-        Some(Err(TError::ConnectionClosed)) | None => {
-            post_box.post(Event::connection_closed(id));
+        Some(Err(TungError::ConnectionClosed)) | None => {
+            post_box.post(WebSocketEvent::connection_closed(id));
             false
         }
         Some(Err(err)) => {
-            post_box.post(Event::error(id, err.into()));
+            post_box.post(WebSocketEvent::error(id, err.into()));
             // TODO: some of these might by non-fatal
             false
         }
@@ -75,19 +76,24 @@ where
 async fn run_websocket<WebSocketId, EventType>(
     id: WebSocketId,
     request: Request,
+    handle: Handle,
     post_box: CustomEventPostBox<EventType>,
 ) where
-    EventType: Send + From<Event<WebSocketId>>,
+    EventType: Send + From<WebSocketEvent<WebSocketId>>,
     WebSocketId: Clone,
 {
     let (mut socket, mut to_send_rx) = match connect_async(request).await {
         Ok((socket, response)) => {
             let (tx, rx) = channel(2);
-            post_box.post(Event::connected(id.clone(), WebSocketSink(tx), response));
+            post_box.post(WebSocketEvent::connected(
+                id.clone(),
+                WebSocketSink(handle, tx),
+                response,
+            ));
             (socket, rx)
         }
         Err(err) => {
-            post_box.post(Event::connection_failed(id, err.into()));
+            post_box.post(WebSocketEvent::connection_failed(id, err.into()));
             return;
         }
     };
@@ -104,7 +110,7 @@ async fn run_websocket<WebSocketId, EventType>(
                     Some(msg) => match socket.send(msg).await {
                         Ok(()) => {},
                         Err(err) => {
-                            post_box.post(Event::error(id, err.into()));
+                            post_box.post(WebSocketEvent::error(id, err.into()));
                             // TODO: some of these might by non-fatal
                             break;
                         }
@@ -117,33 +123,46 @@ async fn run_websocket<WebSocketId, EventType>(
 }
 
 impl<EventType> WebSocketContext<EventType> {
-    pub fn start_connect<WebSocketId>(&mut self, id: WebSocketId, request: Request)
+    pub fn start_connect<WebSocketId, R>(&mut self, id: WebSocketId, request: R) -> Result<()>
     where
-        EventType: Send + From<Event<WebSocketId>> + 'static,
+        EventType: Send + From<WebSocketEvent<WebSocketId>> + 'static,
         WebSocketId: Send + Clone + 'static,
+        R: IntoClientRequest,
     {
         let post_box = self.post_box.clone();
-        self.runtime.spawn(async {
-            run_websocket(id, request, post_box).await;
+        let request = request.into_client_request()?;
+        let handle = self.runtime.clone();
+        self.runtime.spawn(async move {
+            run_websocket(id, request, handle, post_box).await;
         });
+        Ok(())
     }
 }
 
-impl From<TError> for Error {
-    fn from(err: TError) -> Self {
+impl WebSocketSink {
+    pub fn send(&mut self, msg: Message) -> Result<()> {
+        let sender = &mut self.1;
+        self.0
+            .block_on(async { sender.send(msg).await })
+            .map_err(|_| Error::AlreadyClosed)
+    }
+}
+
+impl From<TungError> for Error {
+    fn from(err: TungError) -> Self {
         match err {
-            TError::ConnectionClosed => Error::ConnectionClosed,
-            TError::AlreadyClosed => Error::AlreadyClosed,
-            TError::Io(err) => Error::Io(err),
+            TungError::ConnectionClosed => Error::ConnectionClosed,
+            TungError::AlreadyClosed => Error::AlreadyClosed,
+            TungError::Io(err) => Error::Io(err),
             #[cfg(feature = "tls")]
-            TError::Tls(err) => Error::Tls(err),
-            TError::Capacity(msg) => Error::Capacity(msg),
-            TError::Protocol(msg) => Error::Protocol(msg),
-            TError::SendQueueFull(msg) => Error::SendQueueFull(msg),
-            TError::Utf8 => Error::Utf8,
-            TError::Url(msg) => Error::Url(msg),
-            TError::Http(code) => Error::Http(code),
-            TError::HttpFormat(err) => Error::HttpFormat(err),
+            TungError::Tls(err) => Error::Tls(err),
+            TungError::Capacity(msg) => Error::Capacity(msg),
+            TungError::Protocol(msg) => Error::Protocol(msg),
+            TungError::SendQueueFull(msg) => Error::SendQueueFull(msg),
+            TungError::Utf8 => Error::Utf8,
+            TungError::Url(msg) => Error::Url(msg),
+            TungError::Http(code) => Error::Http(code),
+            TungError::HttpFormat(err) => Error::HttpFormat(err),
         }
     }
 }

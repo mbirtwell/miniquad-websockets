@@ -1,8 +1,7 @@
-#![feature(async_closure)]
-
 pub use imp::{init, Message, WebSocketContext, WebSocketSink};
 
 pub use crate::error::Result;
+pub use crate::event::*;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::native_imp as imp;
 pub use crate::request::IntoClientRequest;
