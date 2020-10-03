@@ -36,8 +36,8 @@ impl Stage {
         #[rustfmt::skip]
         let vertices: [Vertex; 3] = [
             Vertex {  pos: Vec2 { x: 0., y: 0. }},
-            Vertex {  pos: Vec2 { x:  0., y: 0.5 }},
-            Vertex {  pos: Vec2 { x:  0.5, y:  0. }},
+            Vertex {  pos: Vec2 { x:  0.1, y: -0.2 }},
+            Vertex {  pos: Vec2 { x:  0.2, y:  -0.1 }},
         ];
         let vertex_buffer = Buffer::immutable(ctx, BufferType::VertexBuffer, &vertices);
 
@@ -107,8 +107,8 @@ impl EventHandler<WebSocketEvent<()>> for Stage {
         if let Some(sink) = &mut self.websocket_sink {
             let screen_size = ctx.screen_size();
             let pos = MousePos {
-                x: x / screen_size.0,
-                y: y / screen_size.1,
+                x: 2. * x / screen_size.0 - 1.,
+                y: -2. * y / screen_size.1 + 1.,
             };
             sink.send(Message::Text(pos.serialize_json())).unwrap();
         }
@@ -116,8 +116,10 @@ impl EventHandler<WebSocketEvent<()>> for Stage {
 
     fn custom_event(&mut self, _ctx: &mut Context, event_data: Box<WebSocketEvent<()>>) {
         match event_data.kind {
-            WebSocketEventKind::Connected(sink, _) => {
+            WebSocketEventKind::Connected(mut sink, _) => {
                 info!("Connected");
+                let pos = MousePos { x: -0.5, y: 0.5 };
+                sink.send(Message::Text(pos.serialize_json())).unwrap();
                 self.websocket_sink = Some(sink)
             }
             WebSocketEventKind::Message(msg) => {

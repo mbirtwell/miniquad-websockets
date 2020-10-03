@@ -11,12 +11,12 @@ use tokio::select;
 use tokio::stream::StreamExt;
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::task::spawn;
-use tokio_tungstenite::accept_async;
 use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::{self, accept_async, tungstenite};
 
 mod example_interface;
 
-const NEXT_ID: AtomicU32 = AtomicU32::new(1);
+static NEXT_ID: AtomicU32 = AtomicU32::new(1);
 
 impl Color {
     fn random() -> Self {
@@ -88,6 +88,47 @@ fn deserialize_msg(msg: Message) -> MousePos {
     }
 }
 
+async fn process_rx(
+    id: ConnectionId,
+    rx_update: Option<tungstenite::Result<Message>>,
+    distribute_tx: &mut mpsc::Sender<ClientEvent>,
+) -> bool {
+    match rx_update {
+        Some(Ok(rx_update)) => {
+            distribute_tx
+                .send(ClientEvent {
+                    id,
+                    kind: ClientEventKind::Update(deserialize_msg(rx_update)),
+                })
+                .await
+                .unwrap();
+            true
+        }
+        Some(Err(rx_err)) => {
+            println!("Connnection {:?} closed with error {}", id, rx_err);
+            distribute_tx
+                .send(ClientEvent {
+                    id,
+                    kind: ClientEventKind::Disconnection,
+                })
+                .await
+                .unwrap();
+            false
+        }
+        None => {
+            println!("Connnection {:?} closed cleanly", id);
+            distribute_tx
+                .send(ClientEvent {
+                    id,
+                    kind: ClientEventKind::Disconnection,
+                })
+                .await
+                .unwrap();
+            false
+        }
+    }
+}
+
 async fn process_socket(
     socket: TcpStream,
     mut distribute_tx: mpsc::Sender<ClientEvent>,
@@ -115,16 +156,9 @@ async fn process_socket(
     loop {
         select! {
             rx_update = ws.next() => {
-                match rx_update {
-                    Some(rx_update) => distribute_tx.send(ClientEvent {
-                        id,
-                        kind: ClientEventKind::Update(deserialize_msg(rx_update.unwrap())),
-                    }).await.unwrap(),
-                    None => distribute_tx.send(ClientEvent {
-                        id,
-                        kind: ClientEventKind::Disconnection,
-                    }).await.unwrap(),
-                };
+                if !process_rx(id, rx_update, &mut distribute_tx).await {
+                    break;
+                }
             }
             tx_update = distribute_rx.next() => {
                 match tx_update {
