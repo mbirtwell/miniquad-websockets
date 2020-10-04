@@ -1,16 +1,14 @@
-pub use imp::{init, Message, WebSocketContext, WebSocketSink};
+pub use imp::{init, WebSocketContext, WebSocketSink};
 
 pub use crate::error::Result;
 pub use crate::event::*;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::native_imp as imp;
-pub use crate::request::IntoClientRequest;
 #[cfg(target_arch = "wasm32")]
 use crate::wasm_imp as imp;
 
 mod error;
 mod event;
-mod request;
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native_imp;

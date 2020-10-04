@@ -1,7 +1,6 @@
 //! Error handling.
 // Lots of copying from tungstenite again.
 
-use crate::Message;
 use std::borrow::Cow;
 use std::error::Error as ErrorTrait;
 use std::fmt;
@@ -58,8 +57,8 @@ pub enum Error {
     Capacity(Cow<'static, str>),
     /// Protocol violation.
     Protocol(Cow<'static, str>),
-    // /// Message send queue full.
-    SendQueueFull(Message),
+    /// Message send queue full.
+    SendQueueFull(String),
     /// UTF coding error
     Utf8,
     /// Invalid URL.
@@ -68,6 +67,8 @@ pub enum Error {
     Http(http::StatusCode),
     /// HTTP format error.
     HttpFormat(http::Error),
+    ///
+    UnsupportedDataFrame,
 }
 
 impl fmt::Display for Error {
@@ -85,6 +86,10 @@ impl fmt::Display for Error {
             Error::Url(ref msg) => write!(f, "URL error: {}", msg),
             Error::Http(code) => write!(f, "HTTP error: {}", code),
             Error::HttpFormat(ref err) => write!(f, "HTTP format error: {}", err),
+            Error::UnsupportedDataFrame => write!(
+                f,
+                "Recieved data frame type that's not supported by this library"
+            ),
         }
     }
 }

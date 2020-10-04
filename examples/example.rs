@@ -3,9 +3,7 @@ use miniquad::{
     conf, info, Bindings, Buffer, BufferLayout, BufferType, Context, CustomEventPostBox,
     EventHandler, Pipeline, Shader, UserData, VertexAttribute, VertexFormat,
 };
-use miniquad_websockets::{
-    Message, WebSocketContext, WebSocketEvent, WebSocketEventKind, WebSocketSink,
-};
+use miniquad_websockets::{WebSocketContext, WebSocketEvent, WebSocketEventKind, WebSocketSink};
 use nanoserde::{DeJson, SerJson};
 use std::collections::HashMap;
 
@@ -75,14 +73,6 @@ impl Stage {
     }
 }
 
-fn deserialize_msg(msg: Message) -> ClientState {
-    if let Message::Text(s) = msg {
-        ClientState::deserialize_json(&s).unwrap()
-    } else {
-        panic!("Unsupported message type. {:?}", msg)
-    }
-}
-
 impl EventHandler<WebSocketEvent<()>> for Stage {
     fn update(&mut self, _ctx: &mut Context) {}
 
@@ -110,20 +100,20 @@ impl EventHandler<WebSocketEvent<()>> for Stage {
                 x: 2. * x / screen_size.0 - 1.,
                 y: -2. * y / screen_size.1 + 1.,
             };
-            sink.send(Message::Text(pos.serialize_json())).unwrap();
+            sink.send(pos.serialize_json()).unwrap();
         }
     }
 
     fn custom_event(&mut self, _ctx: &mut Context, event_data: Box<WebSocketEvent<()>>) {
         match event_data.kind {
-            WebSocketEventKind::Connected(mut sink, _) => {
+            WebSocketEventKind::Connected(mut sink) => {
                 info!("Connected");
                 let pos = MousePos { x: -0.5, y: 0.5 };
-                sink.send(Message::Text(pos.serialize_json())).unwrap();
+                sink.send(pos.serialize_json()).unwrap();
                 self.websocket_sink = Some(sink)
             }
             WebSocketEventKind::Message(msg) => {
-                let state = deserialize_msg(msg);
+                let state = ClientState::deserialize_json(&msg).unwrap();
                 self.state.insert(state.id, state);
             }
             _ => panic!("Unhandle websocket event kind: {:?}", event_data.kind),

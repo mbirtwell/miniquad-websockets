@@ -1,6 +1,5 @@
 use crate::error::Error;
-use crate::request::Response;
-use crate::{Message, WebSocketSink};
+use crate::WebSocketSink;
 use std::fmt::{self, Debug, Formatter};
 
 pub struct WebSocketEvent<WebSocketId> {
@@ -8,10 +7,17 @@ pub struct WebSocketEvent<WebSocketId> {
     pub kind: WebSocketEventKind,
 }
 
+#[derive(Debug)]
+pub struct CloseFrame {
+    code: u32,
+    reason: String,
+}
+
 pub enum WebSocketEventKind {
-    Connected(WebSocketSink, Response),
+    Connected(WebSocketSink),
     ConnectionFailed(Error),
-    Message(Message),
+    Message(String),
+    CloseMessage(Option<CloseFrame>),
     ConnectionClosed,
     Error(Error),
 }
@@ -19,13 +25,14 @@ pub enum WebSocketEventKind {
 impl Debug for WebSocketEventKind {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            WebSocketEventKind::Connected(_, r) => {
-                write!(f, "WebSocketEventKind::Connected(..., {:?})", r)
-            }
+            WebSocketEventKind::Connected(_) => write!(f, "WebSocketEventKind::Connected(...)"),
             WebSocketEventKind::ConnectionFailed(err) => {
                 write!(f, "WebSocketEventKind::ConnectionFailed({:?})", err)
             }
             WebSocketEventKind::Message(msg) => write!(f, "WebSocketEventKind::Message({:?})", msg),
+            WebSocketEventKind::CloseMessage(frame) => {
+                write!(f, "WebSocketEventKind::CloseMessage({:?})", frame,)
+            }
             WebSocketEventKind::ConnectionClosed => {
                 write!(f, "WebSocketEventKind::ConnectionClosed")
             }
@@ -35,10 +42,10 @@ impl Debug for WebSocketEventKind {
 }
 
 impl<WebSocketId> WebSocketEvent<WebSocketId> {
-    pub fn connected(id: WebSocketId, sink: WebSocketSink, response: Response) -> Self {
+    pub fn connected(id: WebSocketId, sink: WebSocketSink) -> Self {
         Self {
             id,
-            kind: WebSocketEventKind::Connected(sink, response),
+            kind: WebSocketEventKind::Connected(sink),
         }
     }
 
@@ -49,10 +56,24 @@ impl<WebSocketId> WebSocketEvent<WebSocketId> {
         }
     }
 
-    pub fn message(id: WebSocketId, msg: Message) -> Self {
+    pub fn message(id: WebSocketId, msg: String) -> Self {
         Self {
             id,
             kind: WebSocketEventKind::Message(msg),
+        }
+    }
+
+    pub fn empty_close_msg(id: WebSocketId) -> Self {
+        Self {
+            id,
+            kind: WebSocketEventKind::CloseMessage(None),
+        }
+    }
+
+    pub fn close_msg(id: WebSocketId, code: u32, reason: String) -> Self {
+        Self {
+            id,
+            kind: WebSocketEventKind::CloseMessage(Some(CloseFrame { code, reason })),
         }
     }
 

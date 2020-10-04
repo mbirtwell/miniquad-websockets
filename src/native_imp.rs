@@ -1,7 +1,5 @@
 use crate::error::{Error, Result};
 use crate::event::WebSocketEvent;
-use crate::request::Request;
-use crate::IntoClientRequest;
 use futures_util::sink::SinkExt;
 use miniquad::CustomEventPostBox;
 use std::thread;
@@ -11,6 +9,8 @@ use tokio::stream::StreamExt;
 use tokio::sync::mpsc::{channel, Sender};
 use tokio::sync::oneshot;
 use tokio_tungstenite::connect_async;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::handshake::client::Request;
 pub use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::{Error as TungError, Result as TungResult};
 
@@ -58,7 +58,16 @@ where
 {
     match msg {
         Some(Ok(msg)) => {
-            post_box.post(WebSocketEvent::message(id, msg));
+            post_box.post(match msg {
+                Message::Text(s) => WebSocketEvent::message(id, s),
+                Message::Close(Some(frame)) => WebSocketEvent::close_msg(
+                    id,
+                    u16::from(frame.code) as _,
+                    frame.reason.into_owned(),
+                ),
+                Message::Close(None) => WebSocketEvent::empty_close_msg(id),
+                _ => WebSocketEvent::error(id, Error::UnsupportedDataFrame),
+            });
             true
         }
         Some(Err(TungError::ConnectionClosed)) | None => {
@@ -83,12 +92,11 @@ async fn run_websocket<WebSocketId, EventType>(
     WebSocketId: Clone,
 {
     let (mut socket, mut to_send_rx) = match connect_async(request).await {
-        Ok((socket, response)) => {
+        Ok((socket, _)) => {
             let (tx, rx) = channel(2);
             post_box.post(WebSocketEvent::connected(
                 id.clone(),
                 WebSocketSink(handle, tx),
-                response,
             ));
             (socket, rx)
         }
@@ -123,11 +131,10 @@ async fn run_websocket<WebSocketId, EventType>(
 }
 
 impl<EventType> WebSocketContext<EventType> {
-    pub fn start_connect<WebSocketId, R>(&mut self, id: WebSocketId, request: R) -> Result<()>
+    pub fn start_connect<WebSocketId>(&mut self, id: WebSocketId, request: &str) -> Result<()>
     where
         EventType: Send + From<WebSocketEvent<WebSocketId>> + 'static,
         WebSocketId: Send + Clone + 'static,
-        R: IntoClientRequest,
     {
         let post_box = self.post_box.clone();
         let request = request.into_client_request()?;
@@ -140,10 +147,10 @@ impl<EventType> WebSocketContext<EventType> {
 }
 
 impl WebSocketSink {
-    pub fn send(&mut self, msg: Message) -> Result<()> {
+    pub fn send(&mut self, msg: String) -> Result<()> {
         let sender = &mut self.1;
         self.0
-            .block_on(async { sender.send(msg).await })
+            .block_on(async { sender.send(Message::Text(msg)).await })
             .map_err(|_| Error::AlreadyClosed)
     }
 }
@@ -158,7 +165,10 @@ impl From<TungError> for Error {
             TungError::Tls(err) => Error::Tls(err),
             TungError::Capacity(msg) => Error::Capacity(msg),
             TungError::Protocol(msg) => Error::Protocol(msg),
-            TungError::SendQueueFull(msg) => Error::SendQueueFull(msg),
+            TungError::SendQueueFull(msg) => match msg {
+                Message::Text(msg) => Error::SendQueueFull(msg),
+                _ => panic!("Tried to send something other than text (and it failed)"),
+            },
             TungError::Utf8 => Error::Utf8,
             TungError::Url(msg) => Error::Url(msg),
             TungError::Http(code) => Error::Http(code),
