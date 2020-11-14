@@ -1,5 +1,5 @@
-use futures_util::core_reexport::str::Chars;
 use nanoserde::{DeJson, DeJsonErr, DeJsonState, SerJson, SerJsonState};
+use std::str::Chars;
 
 #[derive(Copy, Clone, Hash, Eq, PartialEq, Debug)]
 pub struct ConnectionId(pub u32);

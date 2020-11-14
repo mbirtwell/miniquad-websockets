@@ -144,6 +144,8 @@ mod shader {
     }"#;
 
     pub const FRAGMENT: &str = r#"#version 100
+    precision mediump float;
+    
     varying vec3 fragColor;
 
     void main() {
