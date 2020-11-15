@@ -80,11 +80,14 @@ async fn distribute(mut rx: mpsc::Receiver<ClientEvent>, tx: broadcast::Sender<C
     }
 }
 
-fn deserialize_msg(msg: Message) -> MousePos {
-    if let Message::Text(s) = msg {
-        MousePos::deserialize_json(&s).unwrap()
-    } else {
-        panic!("Unsupported message type. {:?}", msg)
+fn deserialize_msg(msg: Message) -> Option<MousePos> {
+    match msg {
+        Message::Text(s) => Some(MousePos::deserialize_json(&s).unwrap()),
+        Message::Close(cf) => {
+            println!("Close frame: {:?}", cf);
+            None
+        }
+        _ => panic!("Unsupported message type. {:?}", msg),
     }
 }
 
@@ -95,13 +98,15 @@ async fn process_rx(
 ) -> bool {
     match rx_update {
         Some(Ok(rx_update)) => {
-            distribute_tx
-                .send(ClientEvent {
-                    id,
-                    kind: ClientEventKind::Update(deserialize_msg(rx_update)),
-                })
-                .await
-                .unwrap();
+            if let Some(pos) = deserialize_msg(rx_update) {
+                distribute_tx
+                    .send(ClientEvent {
+                        id,
+                        kind: ClientEventKind::Update(pos),
+                    })
+                    .await
+                    .unwrap();
+            }
             true
         }
         Some(Err(rx_err)) => {
@@ -139,7 +144,7 @@ async fn process_socket(
     println!("New connection id: {:?} color: {:?}", id, color);
     let mut ws = accept_async(socket).await.unwrap();
     let initial = ws.next().await.unwrap().unwrap();
-    let pos = deserialize_msg(initial);
+    let pos = deserialize_msg(initial).unwrap();
     let (tx, rx) = oneshot::channel();
     distribute_tx
         .send(ClientEvent {
@@ -172,7 +177,7 @@ async fn process_socket(
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
-    let mut listener = TcpListener::bind("127.0.0.1:8080").await?;
+    let mut listener = TcpListener::bind("0.0.0.0:8080").await?;
     let (ingress_tx, ingress_rx) = mpsc::channel(10);
     let (egress_tx, egress_rx) = broadcast::channel(10);
     drop(egress_rx);
@@ -180,6 +185,7 @@ async fn main() -> io::Result<()> {
 
     spawn(distribute(ingress_rx, egress_tx));
 
+    println!("Running");
     loop {
         let (socket, _) = listener.accept().await?;
         spawn(process_socket(
